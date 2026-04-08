@@ -21,14 +21,10 @@ export interface Signal {
 }
 
 export interface AnalyzeRequest {
-  sourceA: {
+  sources: {
     company: string;
     text: string;
-  };
-  sourceB: {
-    company: string;
-    text: string;
-  };
+  }[];
 }
 
 export interface AnalyzeResponse {
