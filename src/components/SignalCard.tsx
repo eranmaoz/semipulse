@@ -21,6 +21,12 @@ const typeConfig = {
     icon: '▲',
     bar: 'bg-yellow-400',
   },
+  political_insight: {
+    label: 'POLITICAL INSIGHT',
+    color: 'text-blue-400 border-blue-400/30 bg-blue-400/10',
+    icon: '🏛',
+    bar: 'bg-blue-400',
+  },
 };
 
 export default function SignalCard({ signal }: { signal: Signal }) {

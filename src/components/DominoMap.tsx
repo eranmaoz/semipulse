@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { Signal } from '@/types';
+import { Signal, PoliticalActivity } from '@/types';
 
 interface RippleNode {
   ticker: string;
@@ -101,9 +101,10 @@ function FlowingEdge({ x1, y1, x2, y2, color, strength, animated }: {
   );
 }
 
-function NodeCircle({ node, pos, selected, onClick }: {
+function NodeCircle({ node, pos, selected, onClick, hasPolitical }: {
   node: RippleNode; pos: { x: number; y: number };
   selected: boolean; onClick: () => void;
+  hasPolitical?: boolean;
 }) {
   const color = nodeGlow(node);
   const r = node.tier === 0 ? 32 : 24;
@@ -134,6 +135,13 @@ function NodeCircle({ node, pos, selected, onClick }: {
           fill="rgba(148,163,184,0.6)" fontSize="7.5" fontFamily="system-ui">
           {node.role}
         </text>
+      )}
+      {/* Political activity badge */}
+      {hasPolitical && (
+        <g transform={`translate(${r - 4},${-r + 4})`}>
+          <circle r="7" fill="#1e3a8a" stroke="#3b82f6" strokeWidth="1.5" />
+          <text textAnchor="middle" dy="3.5" fontSize="7" fill="white">🏛</text>
+        </g>
       )}
     </g>
   );
@@ -252,12 +260,22 @@ export default function DominoMap({ ticker, signals = [] }: { ticker: string; si
   const [data, setData] = useState<DominoData | null>(null);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
+  const [politicalData, setPoliticalData] = useState<Record<string, PoliticalActivity>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch(`/api/domino?ticker=${ticker}`);
-      if (res.ok) setData(await res.json());
+      if (res.ok) {
+        const d = await res.json();
+        setData(d);
+        // Fetch political data for all tickers in the map
+        const tickers = d.nodes?.map((n: RippleNode) => n.ticker).join(',');
+        if (tickers) {
+          const polRes = await fetch(`/api/political?tickers=${tickers}`);
+          if (polRes.ok) setPoliticalData(await polRes.json());
+        }
+      }
     } finally {
       setLoading(false);
     }
@@ -434,6 +452,7 @@ export default function DominoMap({ ticker, signals = [] }: { ticker: string; si
                 <NodeCircle key={node.ticker} node={node} pos={pos}
                   selected={selected === node.ticker}
                   onClick={() => setSelected(selected === node.ticker ? null : node.ticker)}
+                  hasPolitical={!!politicalData[node.ticker]}
                 />
               );
             })}
@@ -497,7 +516,40 @@ export default function DominoMap({ ticker, signals = [] }: { ticker: string; si
         </div>
       )}
 
-      <EventPanel ticker={ticker} />
+      {/* Political trades for selected node */}
+      {selectedNode && politicalData[selectedNode.ticker] && (() => {
+        const pol = politicalData[selectedNode.ticker];
+        const fmtAmount = (low: number | null, high: number | null) =>
+          low ? `$${(low/1000).toFixed(0)}K–$${((high??low)/1000).toFixed(0)}K` : 'undisclosed';
+        return (
+          <div className="mt-3 p-3 rounded-xl border border-blue-500/20 bg-blue-500/5">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-sm">🏛</span>
+              <span className="text-xs font-semibold text-blue-300 uppercase tracking-wider">
+                Congressional Activity — {selectedNode.ticker}
+              </span>
+              <span className="ml-auto text-xs text-gray-600">
+                {pol.buyCount} buy · {pol.sellCount} sell (last 7 days)
+              </span>
+            </div>
+            <div className="space-y-1.5">
+              {pol.recentTrades.map((t, i) => (
+                <div key={i} className="flex items-center gap-3 text-xs rounded-lg bg-white/3 px-3 py-2">
+                  <span className={`font-mono font-bold shrink-0 ${t.action === 'buy' ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {t.action === 'buy' ? '▲ BUY' : '▼ SELL'}
+                  </span>
+                  <span className="text-gray-300 truncate">{t.politician}</span>
+                  {t.committee && <span className="text-gray-600 truncate hidden sm:block">{t.committee}</span>}
+                  <span className="ml-auto text-gray-500 shrink-0">{fmtAmount(t.amount_low, t.amount_high)}</span>
+                  <span className="text-gray-700 shrink-0">{t.trade_date}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      <EventPanel key={ticker} ticker={ticker} />
     </div>
   );
 }

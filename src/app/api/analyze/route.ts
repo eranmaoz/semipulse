@@ -80,7 +80,54 @@ export async function POST(req: NextRequest) {
       await Promise.all(signals.map(saveSignal));
     }
 
-    return NextResponse.json({ signals, rawAnalysis: cleaned });
+    // ── High-Confidence Anomaly detection ─────────────────────────────────
+    // If supply chain warning exists AND political BUY for same ticker → anomaly
+    const anomalies: Signal[] = [];
+    if (isSupabaseConfigured) {
+      const warningTickers = signals
+        .filter((s) => s.type === 'warning' || s.type === 'contradiction')
+        .flatMap((s) => [s.companyA, s.companyB]);
+
+      if (warningTickers.length) {
+        const { createClient } = await import('@supabase/supabase-js');
+        const sb = createClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        );
+        const since = new Date();
+        since.setDate(since.getDate() - 7);
+        const { data: polTrades } = await sb
+          .from('political_trades')
+          .select('ticker, politician, party, committee, action, amount_low, trade_date')
+          .in('ticker', warningTickers)
+          .eq('action', 'buy')
+          .gte('trade_date', since.toISOString().split('T')[0]);
+
+        for (const trade of polTrades ?? []) {
+          const matchingWarning = signals.find(
+            (s) => (s.type === 'warning' || s.type === 'contradiction') &&
+              (s.companyA === trade.ticker || s.companyB === trade.ticker)
+          );
+          if (!matchingWarning) continue;
+
+          const anomaly: Signal = {
+            id: `anomaly-${trade.ticker}-${Date.now()}`,
+            companyA: trade.ticker,
+            companyB: 'CONGRESS',
+            type: 'political_insight',
+            summary: `⚠ High-Confidence Anomaly: ${trade.ticker} — supply warning + congressional buy`,
+            detail: `${trade.politician} (${trade.party ?? '?'}) purchased ${trade.ticker} on ${trade.trade_date} while supply chain analysis flags a warning for this ticker. This divergence between smart-money political action and negative supply signals warrants close monitoring.`,
+            confidence: 91,
+            timestamp: new Date().toISOString(),
+            sources: [`capitoltrades.com`, ...matchingWarning.sources],
+          };
+          anomalies.push(anomaly);
+          await saveSignal(anomaly);
+        }
+      }
+    }
+
+    return NextResponse.json({ signals: [...signals, ...anomalies], rawAnalysis: cleaned });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ error: message }, { status: 500 });
